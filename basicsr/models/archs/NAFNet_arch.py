@@ -26,7 +26,7 @@ class SimpleGate(nn.Module):
 
 class NAFBlock(nn.Module):
     def __init__(self, c, DW_Expand=2, FFN_Expand=2, drop_out_rate=0.):
-        super().__init__()in_channels
+        super().__init__()
         #c == N
         dw_channel = c * DW_Expand
 
