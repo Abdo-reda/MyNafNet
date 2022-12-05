@@ -27,30 +27,15 @@ class SimpleGate(nn.Module):
 class NAFBlock(nn.Module):
     def __init__(self, c, DW_Expand=2, FFN_Expand=2, drop_out_rate=0.):
         super().__init__()
-        #c == N
         dw_channel = c * DW_Expand
-
-        self.conv1 = nn.Conv2d(in_channels=c, out_channels=c // 2, kernel_size=1, padding=0, stride=1, groups=c//2, bias=True)
-
-        self.conv2 = nn.Conv2d(in_channels=c, out_channels=2*c, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
-
-        self.conv3 = nn.Conv2d(in_channels=c, out_channels=2*c, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
-
-        self.conv4 = nn.MaxPool2d(3, padding=1, stride=1)
-
-        self.conv5 = nn.Conv2d(in_channels=2*c, out_channels=c, kernel_size=3, padding=1, stride=1, groups=c, bias=True) #3x3
-
-        self.conv6 = nn.Conv2d(in_channels=2*c, out_channels=c // 4, kernel_size=5, padding=2, in_channels
-        =1, groups=c//4, bias=True) #5x5 size of output volume = (W-F+2P)/S+1
-
-        self.conv7 = nn.Conv2d(in_channels=c, out_channels=c//4, kernel_size=1, padding=0, stride=1, groups=c//4, bias=True)#1x1
+        self.conv1 = nn.Conv2d(in_channels=c, out_channels=dw_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+        self.conv2 = nn.Conv2d(in_channels=dw_channel, out_channels=dw_channel, kernel_size=3, padding=1, stride=1, groups=dw_channel,
+                               bias=True)
+        self.conv3 = nn.Conv2d(in_channels=dw_channel // 2, out_channels=c, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
         
-
-        self.conv8 = nn.Conv2d(in_channels=dw_channel // 2, out_channels=c, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
-
         # Simplified Channel Attention
         self.sca = nn.Sequential(
-            nn.AdaptiveMaxPool2d(1),
+            nn.AdaptiveAvgPool2d(1),
             nn.Conv2d(in_channels=dw_channel // 2, out_channels=dw_channel // 2, kernel_size=1, padding=0, stride=1,
                       groups=1, bias=True),
         )
@@ -59,8 +44,20 @@ class NAFBlock(nn.Module):
         self.sg = SimpleGate()
 
         ffn_channel = FFN_Expand * c
-        self.conv9 = nn.Conv2d(in_channels=c, out_channels=ffn_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
-        self.conv10 = nn.Conv2d(in_channels=ffn_channel // 2, out_channels=c, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+         
+        self.conv4 = nn.Conv2d(in_channels=c, out_channels=ffn_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+
+        self.conv5 = nn.Conv2d(in_channels=ffn_channel, out_channels=ffn_channel*2, kernel_size=3, padding=1, stride=1, groups=ffn_channel,
+                               bias=True)
+
+       
+
+        self.conv6 = nn.Conv2d(in_channels=c, out_channels=ffn_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+
+        self.conv7 = nn.Conv2d(in_channels=ffn_channel, out_channels=ffn_channel, kernel_size=3, padding=1, stride=1, groups=ffn_channel,
+                               bias=True)
+
+        self.conv8 = nn.Conv2d(in_channels=ffn_channel, out_channels=c, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
 
         self.norm1 = LayerNorm2d(c)
         self.norm2 = LayerNorm2d(c)
@@ -75,33 +72,29 @@ class NAFBlock(nn.Module):
         x = inp
 
         x = self.norm1(x)
-      
-        d = self.conv1(x)
-        c = self.conv2(x)
-        c = self.conv5(c)
-        b = self.conv3(x)
-        b = self.conv6(b)
-        a = self.conv4(x) #max pool
-        a = self.conv7(a)
 
-        x=torch.cat((a,b),1) #dim=1
-        x=torch.cat((x,c),1)
-        x=torch.cat((x,d),1)
-    
+        x = self.conv1(x)
+        x = self.conv2(x)
         x = self.sg(x)
-  
         x = x * self.sca(x)
-  
-
-        x = self.conv8(x)
+        x = self.conv3(x)
 
         x = self.dropout1(x)
 
         y = inp + x * self.beta
 
-        x = self.conv9(self.norm2(y))
-        x = self.sg(x)
-        x = self.conv10(x)
+        y = self.norm2(y) 
+        a=self.conv4(y)
+        a=self.conv5(a)
+        a=self.sg(a)
+
+        b=self.conv6(y)
+        b=self.conv7(b)
+
+        x= a * b
+
+        
+        x = self.conv8(x)
 
         x = self.dropout2(x)
 
@@ -123,11 +116,6 @@ class NAFNet(nn.Module):
         self.middle_blks = nn.ModuleList()
         self.ups = nn.ModuleList()
         self.downs = nn.ModuleList()
-
-        print("Number of blocks")
-        print(enc_blk_nums)
-        print(middle_blk_num)
-        print(dec_blk_nums)
 
         chan = width
         for num in enc_blk_nums:
@@ -199,8 +187,6 @@ class NAFNetLocal(Local_Base, NAFNet):
         Local_Base.__init__(self)
         NAFNet.__init__(self, *args, **kwargs)
 
-        print("NAFNETLOCAL!!")
-
         N, C, H, W = train_size
         base_size = (int(H * 1.5), int(W * 1.5))
 
@@ -216,9 +202,6 @@ if __name__ == '__main__':
     # enc_blks = [2, 2, 4, 8]
     # middle_blk_num = 12
     # dec_blks = [2, 2, 2, 2]
-
-    print("main_program !!!!!")
-
 
     enc_blks = [1, 1, 1, 28]
     middle_blk_num = 1
